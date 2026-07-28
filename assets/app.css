@@ -1,0 +1,176 @@
+/* Newton Horarios
+   Variables también en .nh-modal-overlay: el modal se monta en body, fuera de #nh-root. */
+#nh-root,
+.nh-modal-overlay {
+  --nh-bg: #f4f6fb;
+  --nh-card: #ffffff;
+  --nh-border: #dfe4ee;
+  --nh-text: #1d2433;
+  --nh-muted: #6b7280;
+  --nh-primary: #2f56d9;
+  --nh-primary-dark: #2445b0;
+  --nh-danger: #d92f2f;
+  --nh-ok: #1e9e4a;
+  --nh-warn: #d98f2f;
+}
+#nh-root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--nh-text);
+  background: var(--nh-bg);
+  padding: 16px;
+  border-radius: 12px;
+}
+#nh-root * { box-sizing: border-box; }
+#nh-root h2 { margin: 0 0 4px; font-size: 22px; }
+#nh-root h3 { margin: 0 0 12px; font-size: 17px; }
+#nh-root p.nh-sub { margin: 0 0 16px; color: var(--nh-muted); font-size: 14px; }
+
+/* Tabs */
+.nh-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.nh-tab {
+  border: 1px solid var(--nh-border); background: var(--nh-card); color: var(--nh-text);
+  padding: 8px 16px; border-radius: 999px; cursor: pointer; font-size: 14px; font-weight: 600;
+}
+.nh-tab.active { background: var(--nh-primary); border-color: var(--nh-primary); color: #fff; }
+
+/* Card / toolbar */
+.nh-card { background: var(--nh-card); border: 1px solid var(--nh-border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.nh-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 14px; }
+.nh-field { display: flex; flex-direction: column; gap: 4px; }
+.nh-field label { font-size: 12px; font-weight: 600; color: var(--nh-muted); text-transform: uppercase; letter-spacing: .03em; }
+.nh-field input, .nh-field select, .nh-field textarea {
+  border: 1px solid var(--nh-border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: #fff; color: var(--nh-text); min-width: 130px;
+}
+.nh-field textarea { min-width: 260px; }
+
+/* Buttons */
+.nh-btn {
+  border: none; border-radius: 8px; padding: 9px 16px; font-size: 14px; font-weight: 600;
+  cursor: pointer; background: var(--nh-primary); color: #fff;
+}
+.nh-btn:hover { background: var(--nh-primary-dark); }
+.nh-btn.secondary { background: #fff; color: var(--nh-text); border: 1px solid var(--nh-border); }
+.nh-btn.danger { background: var(--nh-danger); }
+.nh-btn.small { padding: 5px 10px; font-size: 12px; }
+.nh-btn:disabled { opacity: .5; cursor: default; }
+
+/* Grid semanal */
+.nh-grid-wrap { overflow-x: auto; }
+table.nh-grid { border-collapse: collapse; width: 100%; min-width: 760px; }
+table.nh-grid th, table.nh-grid td { border: 1px solid var(--nh-border); padding: 6px; text-align: center; vertical-align: top; }
+table.nh-grid th { background: #3d4658; color: #fff; font-size: 13px; padding: 10px 6px; }
+table.nh-grid td.nh-hora { background: #eef1f7; font-weight: 700; font-size: 12px; white-space: nowrap; }
+.nh-bloque {
+  border-radius: 8px; padding: 8px 6px; margin: 3px 0; font-size: 12px; font-weight: 600;
+  cursor: pointer; line-height: 1.35; position: relative;
+}
+.nh-bloque .nh-b-materia { font-size: 13px; }
+.nh-bloque .nh-b-doc { font-weight: 500; opacity: .92; }
+.nh-bloque .nh-b-meta { font-weight: 500; opacity: .88; font-size: 11px; }
+.nh-bloque .nh-b-tipo { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .9; margin-bottom: 2px; }
+
+/* Autocomplete docentes */
+.nh-ac { position: relative; min-width: 160px; }
+.nh-ac input[type="text"] {
+  width: 100%; border: 1px solid var(--nh-border); border-radius: 8px;
+  padding: 8px 10px; font-size: 14px; background: #fff; color: var(--nh-text);
+}
+.nh-ac-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 30;
+  background: #fff; border: 1px solid var(--nh-border); border-radius: 8px;
+  max-height: 220px; overflow-y: auto; box-shadow: 0 8px 20px rgba(0,0,0,.12);
+}
+.nh-ac-list.nh-hidden { display: none; }
+.nh-ac-item {
+  display: block; width: 100%; text-align: left; border: 0; background: transparent;
+  padding: 8px 10px; font-size: 13px; cursor: pointer; color: var(--nh-text);
+}
+.nh-ac-item:hover { background: #eef2ff; }
+.nh-ac-empty { padding: 8px 10px; font-size: 12px; color: var(--nh-muted); }
+.nh-bloque .nh-estado-dot {
+  position: absolute; top: 5px; right: 6px; width: 10px; height: 10px; border-radius: 50%;
+  border: 1px solid rgba(0,0,0,.25);
+}
+.nh-grid.nh-selecting .nh-bloque { box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.nh-bloque.nh-selected {
+  outline: 3px solid #111;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px rgba(47, 86, 217, .35);
+}
+.nh-bloque-check {
+  position: absolute; top: 5px; left: 5px; width: 16px; height: 16px; border-radius: 4px;
+  border: 2px solid rgba(255,255,255,.95); background: rgba(0,0,0,.25);
+}
+.nh-bloque.nh-selected .nh-bloque-check {
+  background: #111; border-color: #111;
+}
+.nh-bloque.nh-selected .nh-bloque-check::after {
+  content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.nh-sel-bar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin: -4px 0 14px; padding: 10px 12px; border-radius: 8px;
+  background: #eef2ff; border: 1px solid #c7d2fe; font-size: 13px; font-weight: 600;
+}
+.nh-sel-bar.nh-hidden { display: none; }
+.nh-sel-bar #nh-sel-count { margin-right: 4px; color: var(--nh-text); }
+.nh-del-iguales {
+  display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0;
+  font-size: 13px; color: var(--nh-text); font-weight: 500; cursor: pointer;
+}
+.nh-del-iguales input { margin-top: 2px; }
+
+/* Tables */
+table.nh-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+table.nh-table th, table.nh-table td { border-bottom: 1px solid var(--nh-border); padding: 8px 10px; text-align: left; }
+table.nh-table th { font-size: 12px; text-transform: uppercase; color: var(--nh-muted); letter-spacing: .03em; }
+table.nh-table tr:hover td { background: #f8faff; }
+
+/* Estados */
+.nh-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.nh-badge.pendiente    { background: #e5e7eb; color: #374151; }
+.nh-badge.puntual      { background: #d6f5e0; color: #14683a; }
+.nh-badge.tolerancia   { background: #fdf0d2; color: #8a5a00; }
+.nh-badge.tardanza     { background: #fde0d2; color: #99420e; }
+.nh-badge.amonestacion { background: #fbd5d5; color: #991b1b; }
+.nh-badge.ausente      { background: #d1d5db; color: #1f2937; }
+.nh-badge.cancelado    { background: #e0e7ff; color: #3730a3; }
+.nh-badge.si { background: #d6f5e0; color: #14683a; }
+.nh-badge.no { background: #fbd5d5; color: #991b1b; }
+
+/* Modal */
+.nh-modal-overlay {
+  position: fixed; inset: 0; background: rgba(15, 23, 42, .55); z-index: 99999;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.nh-modal {
+  background: #fff; border-radius: 12px; padding: 20px; width: 640px; max-width: 100%;
+  max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,.3);
+}
+.nh-modal h3 { margin-top: 0; }
+.nh-modal .nh-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.nh-modal .nh-form-grid .full { grid-column: 1 / -1; }
+.nh-hint { margin: 0 0 8px; font-size: 12px; font-weight: 400; color: var(--nh-muted); text-transform: none; letter-spacing: normal; line-height: 1.4; }
+.nh-modal-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 18px; }
+.nh-modal-actions .right { display: flex; gap: 8px; margin-left: auto; }
+
+/* Días checkbox (color explícito: no heredar el muted de .nh-field label) */
+.nh-dias { display: flex; gap: 6px; flex-wrap: wrap; }
+.nh-dias label {
+  display: flex; align-items: center; gap: 4px; border: 1px solid var(--nh-border);
+  border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 13px;
+  font-weight: 600; color: var(--nh-text); text-transform: none; letter-spacing: normal;
+}
+.nh-dias label:has(input:checked) { background: var(--nh-primary); color: #fff; border-color: var(--nh-primary); }
+
+/* Aviso / toast */
+.nh-toast {
+  position: fixed; bottom: 22px; right: 22px; z-index: 100000; padding: 12px 18px;
+  border-radius: 10px; color: #fff; font-weight: 600; font-size: 14px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25);
+}
+.nh-toast.ok { background: var(--nh-ok); }
+.nh-toast.error { background: var(--nh-danger); }
+.nh-empty { text-align: center; color: var(--nh-muted); padding: 28px 0; font-size: 14px; }
+.nh-loading { text-align: center; color: var(--nh-muted); padding: 28px 0; }

@@ -1,0 +1,12 @@
+{
+  "name": "newton/newton-horarios",
+  "description": "Registro y control de horarios de docentes para Newton CEU. Integrado con Newton OPM.",
+  "type": "wordpress-plugin",
+  "require": {
+    "php": ">=8.0",
+    "phpoffice/phpspreadsheet": "^1.29"
+  },
+  "config": {
+    "platform-check": false
+  }
+}

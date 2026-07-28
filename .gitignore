@@ -1,0 +1,18 @@
+# Dependencies
+/vendor/
+composer.lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.sublime-*
+
+# Logs / temp
+*.log
+*.tmp
+*.temp
+.cache/
