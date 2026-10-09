@@ -14,7 +14,7 @@ el llamado de lista como comprobante de la hora de llegada del docente.
   clase prevista con `wp_conducta_asistencias` (fecha + aula + franja horaria) y calcula:
   - hora de llegada (hora en que el docente tomó lista),
   - minutos de retraso,
-  - si el docente que dio la clase **coincide con el previsto**,
+  - si hay **llamado de lista OPM** vinculado a ese bloque (**Coincide OPM**),
   - estado según la política de tolerancia.
 - **Política de tolerancia** (configurable): llegada hasta 10 min = puntual; entre 10 y
   20 min = tolerancia (admitida hasta 3 veces por mes, la siguiente genera amonestación);
@@ -52,7 +52,7 @@ el llamado de lista como comprobante de la hora de llegada del docente.
 
 | Rol | Acceso |
 | --- | --- |
-| `secretaria_directiva`, `direccion`, `funcionarios_administrativos`, `administrator` | Gestión completa: horarios, control, amonestaciones, configuración, export |
+| `secretaria_directiva` (= admin en este módulo), `direccion`, `funcionarios_administrativos`, `administrator` | Gestión completa: horarios, control, amonestaciones, configuración, export |
 | `docente` | Solo lectura de sus propios horarios |
 
 ## API REST (namespace `horarios/v1`)

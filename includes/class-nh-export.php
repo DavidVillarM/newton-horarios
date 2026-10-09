@@ -121,7 +121,8 @@ class NH_Export {
     foreach ($ocurrencias as &$o) {
       $o['aula_nombre'] = $aulas[(int) $o['aula_id']] ?? ('Aula #' . $o['aula_id']);
       $o['materia_nombre'] = $o['materia_id'] ? ($materias[(int) $o['materia_id']] ?? '') : ((string) ($o['titulo'] ?? ''));
-      $o['docente_nombre'] = $nombre_user($o['docente_user_id']);
+      $o['docente_nombre'] = $nombre_user($o['docente_user_id'])
+        ?: ((string) ($o['docente_nombre'] ?? '') ?: ((($o['naturaleza'] ?? '') === 'examen') ? 'Examen' : ''));
       $o['control'] = $mapa_ctl[$o['id'] . '|' . $o['fecha_ocurrencia']] ?? null;
       if ($o['control']) {
         $o['control']['docente_real_nombre'] = $nombre_user($o['control']['docente_real_id']);
@@ -166,8 +167,12 @@ class NH_Export {
         $n = (int) (new DateTime($o['fecha_ocurrencia']))->format('N');
         $franja = substr($o['hora_inicio'], 0, 5) . ' a ' . substr($o['hora_fin'], 0, 5);
         $texto = trim($franja . "\n" . $o['materia_nombre'] . ($o['docente_nombre'] ? "\n" . $o['docente_nombre'] : ''));
+        $color = (string) ($o['color'] ?? '');
+        if ($color === '' && !empty($o['docente_user_id'])) {
+          $color = (string) (NH_DB::color_de_docente((int) $o['docente_user_id']) ?: '');
+        }
         $celdas[$franja][$n]['textos'][$texto] = true;
-        $celdas[$franja][$n]['color'] = $o['color'] ?: self::color_de((string) ($o['materia_nombre'] ?: $o['titulo']));
+        $celdas[$franja][$n]['color'] = $color !== '' ? $color : self::color_de((string) ($o['materia_nombre'] ?: $o['titulo']));
       }
 
       // encabezado
@@ -223,7 +228,7 @@ class NH_Export {
     $sheet = $spreadsheet->createSheet();
     $sheet->setTitle('Detalle');
 
-    $headers = ['Fecha', 'Día', 'Inicio', 'Fin', 'Aula', 'Materia', 'Docente previsto', 'Docente real', 'Coincide previsto', 'Hora llegada', 'Hora lista OPM', 'Hora salida', 'Retraso (min)', 'Estado', 'Fuente', 'Observación'];
+    $headers = ['Fecha', 'Día', 'Inicio', 'Fin', 'Aula', 'Materia', 'Docente previsto', 'Docente real', 'Coincide OPM', 'Hora llegada', 'Hora lista OPM', 'Hora salida', 'Retraso (min)', 'Estado', 'Fuente', 'Observación'];
     foreach ($headers as $i => $h) {
       $col = Coordinate::stringFromColumnIndex($i + 1);
       $sheet->setCellValue($col . '1', $h);
@@ -236,8 +241,9 @@ class NH_Export {
       $c = $o['control'];
       $n = (int) (new DateTime($o['fecha_ocurrencia']))->format('N');
       $coincide = '';
-      if ($c && $c['coincide_previsto'] !== null) {
-        $coincide = ((int) $c['coincide_previsto'] === 1) ? 'SÍ' : 'NO';
+      if ($c) {
+        $tiene_opm = !empty($c['asistencia_opm_id']) || !empty($c['hora_lista_opm']) || (isset($c['coincide_previsto']) && (int) $c['coincide_previsto'] === 1);
+        $coincide = $tiene_opm ? 'SÍ' : 'NO';
       }
       $valores = [
         $o['fecha_ocurrencia'],

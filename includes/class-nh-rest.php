@@ -9,8 +9,11 @@ if (!defined('ABSPATH')) exit;
  *   GET    /bloques?desde&hasta[&aula_id][&curso_id][&aula_fisica_id][&docente_id][&materia_id]
  *   POST   /bloques                           crear bloque (único, semanal o rango con varios días)
  *   PUT    /bloques/{id}                      editar bloque
- *   DELETE /bloques/{id}                      desactivar bloque
- *   POST   /bloques/eliminar                  desactivar varios {ids:[…]}
+ *   POST   /bloques/actualizar                editar varios {ids:[…]} (campos de contenido)
+ *   GET    /bloques/{id}/similares            mismos grupo, hora y día en otras fechas
+ *   DELETE /bloques/{id}                      desactivar bloque (toda la serie)
+ *   POST   /bloques/eliminar                  {alcance:serie|ocurrencia, items:[{id,fecha}]}
+ *                                            serie = todas las semanas; ocurrencia = solo esa fecha
  *   GET/POST /aulas-fisicas                   catálogo de salones
  *   PUT/DELETE /aulas-fisicas/{id}
  *   POST   /control/verificar                 cruza con el OPM (hora de lista; llegada/salida manual)
@@ -20,12 +23,24 @@ if (!defined('ABSPATH')) exit;
  *   DELETE /amonestaciones/{id}               anular amonestación
  *   GET/POST /limpieza                        turnos de limpieza
  *   PUT/DELETE /limpieza/{id}
- *   GET    /config | PUT /config              política de tolerancia
+ *   GET    /config | PUT /config              política de tolerancia y colores de docentes
  *   GET    /export?desde&hasta                Excel (ver NH_Export)
- *   POST   /import                            Excel mismo formato de exportación
+ *   POST   /import                            Excel (asistencias, grilla o cartel). El cartel
+ *                                             responde preview y no escribe; confirmar con /import/cartel.
+ *                                             Si faltan docentes en asistencias, responde pendiente_mapeo.
+ *   POST   /import/cartel                     Crea los bloques revisados de un cartel (imagen o Excel).
+ *   GET    /verificaciones/preview            vista previa VH (mes o rango)
+ *   GET    /verificaciones/actores            docentes/grupos con clases en el período
+ *   GET/POST /verificaciones                  listar / guardar reporte VH
+ *   GET/PUT /verificaciones/{id}              ver / fechas y estado (enviado, reportado, pagado)
+ *   POST   /verificaciones/{id}/refrescar     regenerar datos vivos (si no está reportado/pagado)
+ *   PUT    /verificaciones/{id}/comentario-docente
  *
  * Docente:
- *   GET    /mis-horarios?desde&hasta
+ *   GET    /mis-horarios?desde&hasta          clases previstas, dictadas y resumen de horas
+ *   GET    /verificaciones/preview            su propio VH
+ *   GET    /verificaciones                    sus reportes guardados
+ *   PUT    /verificaciones/{id}/comentario-docente
  */
 class NH_Rest {
 
@@ -40,7 +55,11 @@ class NH_Rest {
   }
 
   private static function ok($data, int $status = 200) {
-    return new WP_REST_Response($data, $status);
+    $res = new WP_REST_Response($data, $status);
+    $res->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    $res->header('Pragma', 'no-cache');
+    $res->header('Expires', '0');
+    return $res;
   }
 
   private static function err(string $message, int $status = 400) {
@@ -112,6 +131,18 @@ class NH_Rest {
       ],
     ]);
 
+    register_rest_route(self::NS, '/bloques/actualizar', [
+      'methods' => 'POST',
+      'callback' => [__CLASS__, 'update_bloques'],
+      'permission_callback' => [__CLASS__, 'can_manage'],
+    ]);
+
+    register_rest_route(self::NS, '/bloques/(?P<id>\d+)/similares', [
+      'methods' => 'GET',
+      'callback' => [__CLASS__, 'similares_bloque'],
+      'permission_callback' => [__CLASS__, 'can_manage'],
+    ]);
+
     register_rest_route(self::NS, '/bloques/eliminar', [
       'methods' => 'POST',
       'callback' => [__CLASS__, 'delete_bloques'],
@@ -174,6 +205,12 @@ class NH_Rest {
       'permission_callback' => [__CLASS__, 'can_manage'],
     ]);
 
+    register_rest_route(self::NS, '/import/cartel', [
+      'methods' => 'POST',
+      'callback' => ['NH_Import', 'confirmar_cartel'],
+      'permission_callback' => [__CLASS__, 'can_manage'],
+    ]);
+
     register_rest_route(self::NS, '/limpieza', [
       [
         'methods' => 'GET',
@@ -205,6 +242,56 @@ class NH_Rest {
       'callback' => [__CLASS__, 'mis_horarios'],
       'permission_callback' => [__CLASS__, 'can_access'],
     ]);
+
+    register_rest_route(self::NS, '/verificaciones', [
+      [
+        'methods' => 'GET',
+        'callback' => [__CLASS__, 'list_verificaciones'],
+        'permission_callback' => [__CLASS__, 'can_access'],
+      ],
+      [
+        'methods' => 'POST',
+        'callback' => [__CLASS__, 'create_verificacion'],
+        'permission_callback' => [__CLASS__, 'can_manage'],
+      ],
+    ]);
+
+    register_rest_route(self::NS, '/verificaciones/preview', [
+      'methods' => 'GET',
+      'callback' => [__CLASS__, 'preview_verificacion'],
+      'permission_callback' => [__CLASS__, 'can_access'],
+    ]);
+
+    register_rest_route(self::NS, '/verificaciones/actores', [
+      'methods' => 'GET',
+      'callback' => [__CLASS__, 'actores_verificacion'],
+      'permission_callback' => [__CLASS__, 'can_manage'],
+    ]);
+
+    register_rest_route(self::NS, '/verificaciones/(?P<id>\d+)', [
+      [
+        'methods' => 'GET',
+        'callback' => [__CLASS__, 'get_verificacion'],
+        'permission_callback' => [__CLASS__, 'can_access'],
+      ],
+      [
+        'methods' => 'PUT',
+        'callback' => [__CLASS__, 'update_verificacion'],
+        'permission_callback' => [__CLASS__, 'can_manage'],
+      ],
+    ]);
+
+    register_rest_route(self::NS, '/verificaciones/(?P<id>\d+)/refrescar', [
+      'methods' => 'POST',
+      'callback' => [__CLASS__, 'refrescar_verificacion'],
+      'permission_callback' => [__CLASS__, 'can_manage'],
+    ]);
+
+    register_rest_route(self::NS, '/verificaciones/(?P<id>\d+)/comentario-docente', [
+      'methods' => 'PUT',
+      'callback' => [__CLASS__, 'comentario_docente_verificacion'],
+      'permission_callback' => [__CLASS__, 'can_access'],
+    ]);
   }
 
   // ---------------------------------------------------------------- catálogos
@@ -217,11 +304,28 @@ class NH_Rest {
       'aulas_fisicas' => NH_DB::get_aulas_fisicas(),
       'materias' => NH_OPM::get_materias(),
       'cursos'   => NH_OPM::get_cursos(),
-      'docentes' => NH_OPM::get_docentes(),
+      'docentes' => self::docentes_con_color(),
+      // Personal operativo (no suscriptores) para “quién dio la clase”, etc.
+      'usuarios' => NH_OPM::get_usuarios_staff(),
       'materia_docentes' => NH_OPM::get_mapa_materia_docentes(),
       'config'   => NH_DB::get_config(),
       'es_manager' => NH_Roles::user_is_manager(),
+      'es_docente' => NH_Roles::user_is_docente(),
+      'usuario_actual' => [
+        'id' => get_current_user_id(),
+        'nombre' => wp_get_current_user()->display_name,
+      ],
     ]);
+  }
+
+  /** @return array<int, array{id:int,nombre:string,color:string}> */
+  private static function docentes_con_color(): array {
+    $docentes = NH_OPM::get_docentes();
+    foreach ($docentes as &$d) {
+      $d['color'] = NH_DB::color_de_docente((int) ($d['id'] ?? 0));
+    }
+    unset($d);
+    return $docentes;
   }
 
   // ----------------------------------------------------------- aulas físicas
@@ -350,7 +454,7 @@ class NH_Rest {
     $encargado_nombre = sanitize_text_field((string) $req->get_param('encargado_nombre')) ?: null;
     $encargado_user_id = ((int) $req->get_param('encargado_user_id')) ?: null;
     $titulo = sanitize_text_field((string) $req->get_param('titulo')) ?: null;
-    $color = sanitize_text_field((string) $req->get_param('color')) ?: null;
+    $color = NH_DB::sanitize_hex((string) $req->get_param('color'));
 
     $es_especial = in_array($naturaleza, ['recreo', 'almuerzo'], true);
     $es_limpieza = $naturaleza === 'limpieza';
@@ -383,6 +487,17 @@ class NH_Rest {
         $titulo = self::titulo_por_naturaleza('examen');
       }
       if ($naturaleza === 'examen' && !$color) $color = self::color_por_naturaleza('examen');
+      if (!$color && $docente_user_id) {
+        $color = NH_DB::color_de_docente($docente_user_id);
+      }
+    }
+
+    $docente_nombre = sanitize_text_field((string) $req->get_param('docente_nombre')) ?: null;
+    if ($docente_user_id) {
+      $u = get_userdata($docente_user_id);
+      if ($u) $docente_nombre = (string) $u->display_name;
+    } elseif ($naturaleza === 'examen') {
+      $docente_nombre = $docente_nombre ?: 'Examen';
     }
 
     $data = [
@@ -394,6 +509,7 @@ class NH_Rest {
       'aula_fisica_id'    => $aula_fisica_id,
       'materia_id'        => $materia_id,
       'docente_user_id'   => $docente_user_id,
+      'docente_nombre'    => $docente_nombre,
       'encargado_nombre'  => $encargado_nombre,
       'encargado_user_id' => $encargado_user_id,
       'curso_id'          => $curso_id,
@@ -531,6 +647,108 @@ class NH_Rest {
     return self::ok(['updated' => true]);
   }
 
+  /**
+   * Actualiza campos de contenido en varios bloques (hora, grupo, docente, color…).
+   * No pisa tipo, fecha, día ni vigencia de cada uno.
+   */
+  public static function update_bloques(WP_REST_Request $req) {
+    global $wpdb;
+    $json = $req->get_json_params();
+    $ids = $req->get_param('ids');
+    if (!is_array($ids) && is_array($json) && isset($json['ids'])) $ids = $json['ids'];
+    $ids = is_array($ids) ? array_values(array_unique(array_map('intval', $ids))) : [];
+    $ids = array_values(array_filter($ids, fn($id) => $id > 0));
+    if (!$ids) return self::err('Indicá al menos un horario para editar.');
+
+    $data = self::sanitize_bloque($req);
+    if (is_wp_error($data)) return $data;
+
+    $campos = [
+      'naturaleza', 'hora_inicio', 'hora_fin', 'aula_id', 'aula_fisica_id',
+      'materia_id', 'docente_user_id', 'docente_nombre', 'encargado_nombre',
+      'encargado_user_id', 'curso_id', 'titulo', 'color', 'observacion',
+    ];
+    $patch = [];
+    foreach ($campos as $k) {
+      if (array_key_exists($k, $data)) $patch[$k] = $data[$k];
+    }
+    $patch['modificado_por'] = get_current_user_id();
+
+    $t = self::t_bloques();
+    $updated = [];
+    foreach ($ids as $id) {
+      $existe = $wpdb->get_var($wpdb->prepare("SELECT id FROM $t WHERE id = %d AND activo = 1", $id));
+      if (!$existe) continue;
+      $wpdb->update($t, $patch, ['id' => $id]);
+      $updated[] = $id;
+    }
+    if (!$updated) return self::err('No se encontró ningún horario para editar.', 404);
+    return self::ok(['updated' => count($updated), 'ids' => $updated]);
+  }
+
+  /**
+   * Otros bloques activos del mismo grupo, hora, aula física, naturaleza y día de la semana.
+   */
+  public static function similares_bloque(WP_REST_Request $req) {
+    global $wpdb;
+    $id = (int) $req['id'];
+    $t = self::t_bloques();
+    $b = $wpdb->get_row($wpdb->prepare("SELECT * FROM $t WHERE id = %d AND activo = 1", $id), ARRAY_A);
+    if (!$b) return self::err('Bloque no encontrado.', 404);
+
+    $dia = 0;
+    if (($b['tipo'] ?? '') === 'semanal') {
+      $dia = (int) ($b['dia_semana'] ?? 0);
+    } elseif (!empty($b['fecha'])) {
+      $dia = (int) (new DateTime($b['fecha']))->format('N');
+    }
+    if ($dia < 1 || $dia > 7) {
+      return self::ok(['items' => [], 'dia_semana' => $dia]);
+    }
+
+    $sql = "SELECT id, tipo, fecha, dia_semana, vigencia_desde, vigencia_hasta,
+                   hora_inicio, hora_fin, aula_id, aula_fisica_id, titulo, naturaleza
+            FROM $t
+            WHERE activo = 1 AND id <> %d
+              AND hora_inicio = %s AND hora_fin = %s AND naturaleza = %s";
+    $params = [$id, $b['hora_inicio'], $b['hora_fin'], $b['naturaleza']];
+
+    if (!empty($b['aula_id'])) {
+      $sql .= ' AND aula_id = %d';
+      $params[] = (int) $b['aula_id'];
+    } else {
+      $sql .= ' AND aula_id IS NULL';
+    }
+    if (!empty($b['aula_fisica_id'])) {
+      $sql .= ' AND aula_fisica_id = %d';
+      $params[] = (int) $b['aula_fisica_id'];
+    } else {
+      $sql .= ' AND aula_fisica_id IS NULL';
+    }
+
+    $sql .= ' AND (
+                (tipo = \'semanal\' AND dia_semana = %d)
+                OR (tipo = \'unico\' AND fecha IS NOT NULL AND WEEKDAY(fecha) + 1 = %d)
+              )
+              ORDER BY COALESCE(fecha, vigencia_desde) ASC, id ASC
+              LIMIT 300';
+    $params[] = $dia;
+    $params[] = $dia;
+
+    $rows = $wpdb->get_results($wpdb->prepare($sql, ...$params), ARRAY_A) ?: [];
+    $items = [];
+    foreach ($rows as $r) {
+      $items[] = [
+        'id' => (int) $r['id'],
+        'tipo' => $r['tipo'],
+        'fecha' => $r['fecha'],
+        'dia_semana' => $r['dia_semana'] ? (int) $r['dia_semana'] : $dia,
+        'titulo' => $r['titulo'],
+      ];
+    }
+    return self::ok(['items' => $items, 'dia_semana' => $dia]);
+  }
+
   public static function delete_bloque(WP_REST_Request $req) {
     global $wpdb;
     $id = (int) $req['id'];
@@ -538,14 +756,56 @@ class NH_Rest {
     return self::ok(['deleted' => true]);
   }
 
-  /** Desactiva varios bloques de una vez. Body: { ids: number[] }. */
+  /**
+   * Borra horarios.
+   * Body: { alcance: 'serie'|'ocurrencia', items: [{id, fecha}] }
+   *   serie      → desactiva el bloque (desaparece de todas las semanas).
+   *   ocurrencia → quita solo esa fecha; el resto de la serie sigue.
+   * Compat: { ids: number[] } equivale a alcance serie.
+   */
   public static function delete_bloques(WP_REST_Request $req) {
-    global $wpdb;
     $json = $req->get_json_params();
+    if (!is_array($json)) $json = [];
+
+    $alcance = (string) ($json['alcance'] ?? $req->get_param('alcance') ?? 'serie');
+    if ($alcance !== 'ocurrencia') $alcance = 'serie';
+
+    $pares = self::parse_items_borrado($json['items'] ?? $req->get_param('items'));
+
     $ids = $req->get_param('ids');
-    if (!is_array($ids) && is_array($json) && isset($json['ids'])) $ids = $json['ids'];
+    if (!is_array($ids) && isset($json['ids'])) $ids = $json['ids'];
     $ids = is_array($ids) ? array_values(array_unique(array_map('intval', $ids))) : [];
     $ids = array_values(array_filter($ids, fn($id) => $id > 0));
+
+    if (!$pares && $ids) {
+      $alcance = 'serie';
+      $pares = array_map(fn($id) => ['id' => $id, 'fecha' => ''], $ids);
+    }
+    if (!$pares) return self::err('Indicá al menos un horario para eliminar.');
+
+    if ($alcance === 'ocurrencia') return self::excluir_ocurrencias($pares);
+
+    $idsSerie = array_values(array_unique(array_map(fn($p) => (int) $p['id'], $pares)));
+    return self::desactivar_bloques($idsSerie);
+  }
+
+  /** @return array<int, array{id:int, fecha:string}> */
+  private static function parse_items_borrado($items): array {
+    if (!is_array($items)) return [];
+    $out = [];
+    foreach ($items as $it) {
+      if (!is_array($it)) continue;
+      $id = (int) ($it['id'] ?? 0);
+      $fecha = self::validar_fecha(substr((string) ($it['fecha'] ?? ''), 0, 10)) ?: '';
+      if ($id > 0) $out[] = ['id' => $id, 'fecha' => $fecha];
+    }
+    return $out;
+  }
+
+  /** @param int[] $ids */
+  private static function desactivar_bloques(array $ids) {
+    global $wpdb;
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
     if (!$ids) return self::err('Indicá al menos un horario para eliminar.');
 
     $uid = get_current_user_id();
@@ -553,7 +813,112 @@ class NH_Rest {
     $sql = 'UPDATE ' . self::t_bloques() . " SET activo = 0, modificado_por = %d WHERE id IN ($placeholders) AND activo = 1";
     $wpdb->query($wpdb->prepare($sql, $uid, ...$ids));
 
-    return self::ok(['deleted' => count($ids), 'ids' => $ids]);
+    return self::ok(['deleted' => count($ids), 'ids' => $ids, 'alcance' => 'serie']);
+  }
+
+  /**
+   * Quita fechas concretas de bloques semanales. Si era la última ocurrencia, desactiva el bloque.
+   * Un horario de un solo día se desactiva entero.
+   * @param array<int, array{id:int, fecha:string}> $pares
+   */
+  private static function excluir_ocurrencias(array $pares) {
+    global $wpdb;
+    $porId = [];
+    foreach ($pares as $p) {
+      if ($p['fecha'] === '') continue;
+      $porId[$p['id']][] = $p['fecha'];
+    }
+    if (!$porId) return self::err('Indicá la fecha de esta semana para poder borrar solo esa.');
+
+    $t = self::t_bloques();
+    $uid = get_current_user_id();
+    $afectados = 0;
+
+    foreach ($porId as $id => $fechas) {
+      $b = $wpdb->get_row($wpdb->prepare("SELECT * FROM `$t` WHERE id = %d AND activo = 1", $id), ARRAY_A);
+      if (!$b) continue;
+
+      if (($b['tipo'] ?? '') !== 'semanal') {
+        $updated = $wpdb->update($t, ['activo' => 0, 'modificado_por' => $uid], ['id' => (int) $id]);
+        if ($updated === false) return self::err('No se pudo quitar el horario de esta semana.');
+        $afectados++;
+        continue;
+      }
+
+      $validas = [];
+      foreach (array_unique($fechas) as $fecha) {
+        if (self::fecha_cae_en_bloque($b, $fecha)) $validas[] = $fecha;
+      }
+      if (!$validas) continue;
+
+      $excl = self::parse_fechas_excluidas($b['fechas_excluidas'] ?? '');
+      $excl = array_values(array_unique(array_merge($excl, $validas)));
+      sort($excl);
+
+      if (!self::bloque_tiene_ocurrencia($b, $excl)) {
+        $updated = $wpdb->update($t, ['activo' => 0, 'modificado_por' => $uid], ['id' => (int) $id]);
+      } else {
+        $updated = $wpdb->update($t, [
+          'fechas_excluidas' => wp_json_encode($excl),
+          'modificado_por' => $uid,
+        ], ['id' => (int) $id]);
+      }
+      if ($updated === false) return self::err('No se pudo quitar el horario de esta semana.');
+      $afectados++;
+    }
+
+    if (!$afectados) return self::err('No se encontró el horario de esta semana.');
+    return self::ok(['deleted' => $afectados, 'alcance' => 'ocurrencia']);
+  }
+
+  /** @return string[] fechas Y-m-d */
+  private static function parse_fechas_excluidas($raw): array {
+    if (is_array($raw)) $arr = $raw;
+    else $arr = json_decode((string) $raw, true);
+    if (!is_array($arr)) return [];
+    $out = [];
+    foreach ($arr as $f) {
+      $f = self::validar_fecha(substr((string) $f, 0, 10));
+      if ($f) $out[$f] = true;
+    }
+    $fechas = array_keys($out);
+    sort($fechas);
+    return $fechas;
+  }
+
+  private static function fecha_cae_en_bloque(array $b, string $fecha): bool {
+    $dia = (int) ($b['dia_semana'] ?? 0);
+    $desde = substr((string) ($b['vigencia_desde'] ?? ''), 0, 10);
+    $hasta = substr((string) ($b['vigencia_hasta'] ?? ''), 0, 10);
+    if ($dia < 1 || $dia > 7 || $desde === '' || $hasta === '' || $fecha < $desde || $fecha > $hasta) return false;
+    $dt = DateTime::createFromFormat('Y-m-d', $fecha);
+    return $dt && $dt->format('Y-m-d') === $fecha && (int) $dt->format('N') === $dia;
+  }
+
+  /** @param string[] $excluidas */
+  private static function bloque_tiene_ocurrencia(array $b, array $excluidas): bool {
+    $set = array_flip($excluidas);
+    $desde = substr((string) ($b['vigencia_desde'] ?? ''), 0, 10);
+    $hasta = substr((string) ($b['vigencia_hasta'] ?? ''), 0, 10);
+    $dia = (int) ($b['dia_semana'] ?? 0);
+    if ($desde === '' || $hasta === '' || $hasta < $desde || $dia < 1 || $dia > 7) return false;
+    try {
+      $cursor = new DateTime($desde);
+      $tope = new DateTime($hasta);
+    } catch (Exception $e) {
+      return false;
+    }
+    $guard = 0;
+    while ($cursor <= $tope && $guard < 800) {
+      if ((int) $cursor->format('N') === $dia) {
+        if (!isset($set[$cursor->format('Y-m-d')])) return true;
+        $cursor->modify('+7 days');
+      } else {
+        $cursor->modify('+1 day');
+      }
+      $guard++;
+    }
+    return false;
   }
 
   // -------------------------------------------------- expansión de ocurrencias
@@ -581,10 +946,8 @@ class NH_Rest {
     if ($materia_id) { $where .= ' AND materia_id = %d'; $params[] = $materia_id; }
     if ($aula_fisica_id) { $where .= ' AND aula_fisica_id = %d'; $params[] = $aula_fisica_id; }
     if ($curso_id) {
-      $grupo_ids = [];
-      foreach (NH_OPM::get_aulas() as $a) {
-        if ((int) ($a['curso_id'] ?? 0) === $curso_id) $grupo_ids[] = (int) $a['id'];
-      }
+      // Siempre incluir bloques con este curso_id; además los de grupos del curso.
+      $grupo_ids = NH_OPM::ids_grupos_de_curso($curso_id);
       if ($grupo_ids) {
         $ph = implode(',', array_fill(0, count($grupo_ids), '%d'));
         $where .= " AND (curso_id = %d OR aula_id IN ($ph))";
@@ -604,14 +967,16 @@ class NH_Rest {
     $fin = new DateTime($hasta);
 
     foreach ($bloques as $b) {
+      $excl = array_flip(self::parse_fechas_excluidas($b['fechas_excluidas'] ?? ''));
+      unset($b['fechas_excluidas']);
       if ($b['tipo'] === 'unico') {
-        if ($b['fecha'] >= $desde && $b['fecha'] <= $hasta) {
+        if ($b['fecha'] >= $desde && $b['fecha'] <= $hasta && !isset($excl[$b['fecha']])) {
           $b['fecha_ocurrencia'] = $b['fecha'];
           $out[] = $b;
         }
         continue;
       }
-      // semanal dentro de vigencia
+      // semanal dentro de vigencia, salteando las fechas borradas de una sola semana
       $vd = max($desde, (string) $b['vigencia_desde']);
       $vh = min($hasta, (string) $b['vigencia_hasta']);
       if ($vd > $vh) continue;
@@ -619,9 +984,12 @@ class NH_Rest {
       $tope = new DateTime($vh);
       while ($cursor <= $tope) {
         if ((int) $cursor->format('N') === (int) $b['dia_semana']) {
-          $row = $b;
-          $row['fecha_ocurrencia'] = $cursor->format('Y-m-d');
-          $out[] = $row;
+          $fecha = $cursor->format('Y-m-d');
+          if (!isset($excl[$fecha])) {
+            $row = $b;
+            $row['fecha_ocurrencia'] = $fecha;
+            $out[] = $row;
+          }
           $cursor->modify('+7 days');
         } else {
           $cursor->modify('+1 day');
@@ -678,7 +1046,15 @@ class NH_Rest {
     foreach (NH_OPM::get_cursos() as $c) $mapaCursos[(int) $c['id']] = $c['nombre'];
 
     foreach ($ocurrencias as &$o) {
-      $o['docente_nombre'] = $o['docente_user_id'] ? ($nombres[(int) $o['docente_user_id']] ?? null) : null;
+      $o['docente_nombre'] = $o['docente_user_id']
+        ? ($nombres[(int) $o['docente_user_id']] ?? ($o['docente_nombre'] ?? null))
+        : ($o['docente_nombre'] ?? null);
+      if (!$o['docente_nombre'] && ($o['naturaleza'] ?? '') === 'examen') {
+        $o['docente_nombre'] = 'Examen';
+      }
+      if (!$o['docente_nombre'] && !empty($o['encargado_nombre'])) {
+        $o['docente_nombre'] = $o['encargado_nombre'];
+      }
       $o['encargado_display'] = !empty($o['encargado_user_id'])
         ? ($nombres[(int) $o['encargado_user_id']] ?? null)
         : ($o['encargado_nombre'] ?? null);
@@ -686,11 +1062,17 @@ class NH_Rest {
         $o['encargado_display'] = $o['encargado_nombre'];
       }
       $o['grupo_nombre'] = !empty($o['aula_id']) ? ($mapaGrupos[(int) $o['aula_id']] ?? null) : null;
+      if (!$o['grupo_nombre'] && strcasecmp(trim((string) ($o['titulo'] ?? '')), 'Sala Test') === 0) {
+        $o['grupo_nombre'] = 'Todos';
+      }
       $o['aula_nombre'] = $o['grupo_nombre']; // compat
       $o['aula_fisica_nombre'] = !empty($o['aula_fisica_id']) ? ($mapaAF[(int) $o['aula_fisica_id']] ?? null) : null;
       $o['curso_nombre'] = !empty($o['curso_id']) ? ($mapaCursos[(int) $o['curso_id']] ?? null) : null;
-      if ($o['control'] && $o['control']['docente_real_id']) {
-        $o['control']['docente_real_nombre'] = $nombres[(int) $o['control']['docente_real_id']] ?? null;
+      if ($o['control']) {
+        if (!empty($o['control']['docente_real_id'])) {
+          $o['control']['docente_real_nombre'] = $nombres[(int) $o['control']['docente_real_id']]
+            ?? ($o['control']['docente_real_nombre'] ?? null);
+        }
       }
     }
     unset($o);
@@ -722,7 +1104,45 @@ class NH_Rest {
     $uid = get_current_user_id();
     $ocurrencias = self::expandir_ocurrencias($desde, $hasta, null, $uid);
     $ocurrencias = self::adjuntar_control($ocurrencias, $desde, $hasta);
-    return self::ok(['items' => $ocurrencias]);
+
+    $clases = [];
+    foreach ($ocurrencias as $o) {
+      $nat = (string) ($o['naturaleza'] ?? 'clase');
+      if (in_array($nat, ['recreo', 'almuerzo', 'limpieza'], true)) continue;
+
+      $m = NH_Verificacion::metricas_ocurrencia($o);
+      $c = $o['control'] ?? null;
+      $llegada = $c['hora_llegada'] ?? null;
+      $salida = $c['hora_salida'] ?? null;
+
+      $o['minutos_proyectados'] = (int) ($m['proyectados'] ?? 0);
+      $o['minutos_reales'] = (int) ($m['reales'] ?? 0);
+      $o['minutos_faltantes'] = (int) ($m['faltan'] ?? 0);
+      $o['ya_paso'] = !empty($m['ya_paso']);
+      $o['sin_registro'] = !empty($m['sin_registro']);
+      $o['no_dictada'] = !empty($m['no_dictada']);
+      $o['dictada'] = empty($m['no_dictada']) && empty($m['sin_registro']);
+      $o['registro_real'] = ($llegada || $salida)
+        ? (( $llegada ? substr((string) $llegada, 0, 5) : '—') . ' a ' . ($salida ? substr((string) $salida, 0, 5) : '—'))
+        : 'Sin registro';
+      $clases[] = $o;
+    }
+
+    $proximas = [];
+    $realizadas = [];
+    foreach ($clases as $o) {
+      if (!empty($o['ya_paso'])) $realizadas[] = $o;
+      else $proximas[] = $o;
+    }
+
+    return self::ok([
+      'desde' => $desde,
+      'hasta' => $hasta,
+      'items' => $clases,
+      'proximas' => $proximas,
+      'realizadas' => $realizadas,
+      'resumen' => NH_Verificacion::resumen_ocurrencias($clases),
+    ]);
   }
 
   // ------------------------------------------------------------------ control
@@ -757,7 +1177,6 @@ class NH_Rest {
         'SELECT * FROM ' . self::t_control() . ' WHERE bloque_id = %d AND fecha = %s',
         (int) $o['id'], $f
       ), ARRAY_A);
-      if ($existente && $existente['fuente'] === 'manual') continue; // respetar edición manual
 
       $lista = null;
       if (!empty($o['aula_id'])) {
@@ -767,6 +1186,26 @@ class NH_Rest {
           $o['docente_user_id'] ? (int) $o['docente_user_id'] : null,
           $cfg['ventana_llegada_min']
         );
+      }
+
+      // Edición manual: solo refrescar vínculo OPM (coincide / hora lista / docente Registró),
+      // sin pisar llegada, salida, estado ni observación cargados a mano.
+      if ($existente && $existente['fuente'] === 'manual') {
+        $patch = ['modificado_por' => get_current_user_id()];
+        if ($lista) {
+          $docente_real = (int) ($lista['registrado_por_id'] ?? $lista['docente_id'] ?? 0);
+          $patch['asistencia_opm_id'] = $lista['asistencia_id'];
+          $patch['hora_lista_opm'] = $lista['hora_lista'];
+          $patch['coincide_previsto'] = 1;
+          if ($docente_real) $patch['docente_real_id'] = $docente_real;
+          if (!empty($lista['aula_id'])) $patch['aula_real_id'] = $lista['aula_id'];
+          $resultados['con_lista']++;
+        } else {
+          $patch['coincide_previsto'] = 0;
+        }
+        $wpdb->update(self::t_control(), $patch, ['id' => (int) $existente['id']]);
+        $resultados['procesados']++;
+        continue;
       }
 
       $control = [
@@ -782,27 +1221,35 @@ class NH_Rest {
       $hora_salida  = $existente['hora_salida'] ?? null;
 
       if ($lista) {
-        $control['docente_real_id']   = $lista['docente_id'];
+        // Docente real = quien «Registró» la lista en OPM (creado_por).
+        $docente_real = (int) ($lista['registrado_por_id'] ?? $lista['docente_id'] ?? 0);
+        $control['docente_real_id']   = $docente_real ?: null;
         $control['aula_real_id']      = $lista['aula_id'];
         $control['hora_lista_opm']    = $lista['hora_lista'];
         $control['asistencia_opm_id'] = $lista['asistencia_id'];
-        $control['coincide_previsto'] = ($control['docente_previsto_id'] && $lista['docente_id'] === $control['docente_previsto_id']) ? 1 : 0;
+        // Coincide = hay registro OPM vinculado a este bloque (no compara personas).
+        $control['coincide_previsto'] = 1;
         $resultados['con_lista']++;
         $resultados['con_llegada']++; // compat con UI anterior
       } else {
         $control['hora_lista_opm'] = null;
         $control['asistencia_opm_id'] = null;
+        $control['coincide_previsto'] = 0;
       }
 
       if ($hora_llegada) {
         $control['hora_llegada'] = $hora_llegada;
-        $retraso = max(0, (int) round((strtotime("$f $hora_llegada") - strtotime("$f {$o['hora_inicio']}")) / 60));
+        $retraso = self::minutos_retraso_de_llegada($f, $o['hora_inicio'], $o['hora_fin'], $hora_llegada);
         $control['minutos_retraso'] = $retraso;
         $doc_estado = (int) ($control['docente_real_id'] ?? $existente['docente_real_id'] ?? $o['docente_user_id'] ?? 0);
         $excluir = $existente ? (int) $existente['id'] : 0;
-        $control['estado'] = $doc_estado
-          ? self::calcular_estado($retraso, $doc_estado, $f, $cfg, $excluir)
-          : 'pendiente';
+        if ($retraso === null) {
+          $control['estado'] = 'puntual';
+        } else {
+          $control['estado'] = $doc_estado
+            ? self::calcular_estado($retraso, $doc_estado, $f, $cfg, $excluir)
+            : 'pendiente';
+        }
       } elseif ($lista) {
         // Hay llamado de lista pero aún no se cargó la llegada manual.
         $control['hora_llegada'] = null;
@@ -834,6 +1281,21 @@ class NH_Rest {
     }
 
     return self::ok($resultados);
+  }
+
+  /**
+   * Minutos de retraso de la llegada respecto al horario previsto.
+   * Si la entrada es a la hora de fin o después, no es tardanza: se dictó en otro
+   * horario (feriado, virtual, reprogramación).
+   */
+  public static function minutos_retraso_de_llegada(string $fecha, string $hora_inicio, string $hora_fin, ?string $hora_llegada): ?int {
+    if (!$hora_llegada) return null;
+    $ini = strtotime("$fecha $hora_inicio");
+    $fin = strtotime("$fecha $hora_fin");
+    $lleg = strtotime("$fecha $hora_llegada");
+    if (!$ini || !$lleg) return null;
+    if ($fin && $lleg >= $fin) return null;
+    return max(0, (int) round(($lleg - $ini) / 60));
   }
 
   /**
@@ -920,21 +1382,40 @@ class NH_Rest {
       'modificado_por'      => get_current_user_id(),
     ];
 
-    $docente_real = (int) $req->get_param('docente_real_id');
-    if ($docente_real) {
-      $data['docente_real_id'] = $docente_real;
-      $data['coincide_previsto'] = ($data['docente_previsto_id'] && $docente_real === $data['docente_previsto_id']) ? 1 : 0;
+    // Docente real: 0 / vacío = sin datos (se limpia el valor previo).
+    if ($req->has_param('docente_real_id')) {
+      $docente_real = (int) $req->get_param('docente_real_id');
+      if ($docente_real > 0) {
+        $data['docente_real_id'] = $docente_real;
+      } else {
+        $data['docente_real_id'] = null;
+        $docente_real = 0;
+      }
+    } else {
+      $docente_real = 0;
     }
 
-    $aula_real = (int) $req->get_param('aula_real_id');
-    if ($aula_real) $data['aula_real_id'] = $aula_real;
+    // Coincide = vínculo con registro OPM (asistencia / hora de lista), no igualdad de docentes.
+    $existente_prev = $wpdb->get_row($wpdb->prepare(
+      'SELECT id, asistencia_opm_id, hora_lista_opm FROM ' . self::t_control() . ' WHERE bloque_id = %d AND fecha = %s',
+      $bloque_id, $fecha
+    ), ARRAY_A);
+    $tiene_opm = $existente_prev && (
+      !empty($existente_prev['asistencia_opm_id']) || !empty($existente_prev['hora_lista_opm'])
+    );
+    $data['coincide_previsto'] = $tiene_opm ? 1 : 0;
+
+    if ($req->has_param('aula_real_id')) {
+      $aula_real = (int) $req->get_param('aula_real_id');
+      $data['aula_real_id'] = $aula_real > 0 ? $aula_real : null;
+    }
 
     $hora = self::validar_hora((string) $req->get_param('hora_llegada'));
     $retraso = null;
     if ($hora) {
       $data['hora_llegada'] = $hora;
-      $retraso = max(0, (int) round((strtotime("$fecha $hora") - strtotime("$fecha {$bloque['hora_inicio']}")) / 60));
-      $data['minutos_retraso'] = $retraso; // siempre figura, aunque el estado sea puntual/tolerancia
+      $retraso = self::minutos_retraso_de_llegada($fecha, $bloque['hora_inicio'], $bloque['hora_fin'], $hora);
+      $data['minutos_retraso'] = $retraso;
     } elseif ($req->get_param('hora_llegada') === '' || $req->get_param('hora_llegada') === null) {
       // permitir limpiar
       if ($req->has_param('hora_llegada')) {
@@ -951,12 +1432,16 @@ class NH_Rest {
     }
 
     // Si no eligieron estado pero hay llegada, calcular según política (el retraso igual se guarda).
-    if (!$estado && $retraso !== null && $docente_real) {
-      $existente_id = (int) ($wpdb->get_var($wpdb->prepare(
-        'SELECT id FROM ' . self::t_control() . ' WHERE bloque_id = %d AND fecha = %s',
-        $bloque_id, $fecha
-      )) ?: 0);
-      $estado = self::calcular_estado($retraso, $docente_real, $fecha, $cfg, $existente_id);
+    if (!$estado && $hora) {
+      if ($retraso === null) {
+        $estado = 'puntual';
+      } elseif ($docente_real) {
+        $existente_id = (int) ($wpdb->get_var($wpdb->prepare(
+          'SELECT id FROM ' . self::t_control() . ' WHERE bloque_id = %d AND fecha = %s',
+          $bloque_id, $fecha
+        )) ?: 0);
+        $estado = self::calcular_estado($retraso, $docente_real, $fecha, $cfg, $existente_id);
+      }
     }
 
     // Tolerancia sin falta: si llegó dentro del margen, nunca consume cupo (ni aunque elijan "tolerancia").
@@ -1272,6 +1757,182 @@ class NH_Rest {
     if (in_array($periodo, ['mes', 'semana', 'total'], true)) {
       update_option('nh_periodo_tolerancias', $periodo);
     }
+    if ($req->has_param('empresa')) {
+      $emp = sanitize_text_field((string) $req->get_param('empresa'));
+      if ($emp !== '') update_option('nh_empresa', $emp);
+    }
+    if ($req->has_param('colores_docentes')) {
+      $raw = $req->get_param('colores_docentes');
+      if (is_string($raw)) {
+        $decoded = json_decode($raw, true);
+        $raw = is_array($decoded) ? $decoded : [];
+      }
+      if (is_array($raw)) {
+        $clean = [];
+        foreach ($raw as $id => $hex) {
+          $uid = (int) $id;
+          $color = NH_DB::sanitize_hex((string) $hex);
+          if ($uid > 0 && $color) $clean[$uid] = $color;
+        }
+        update_option('nh_colores_docentes', $clean, false);
+      }
+    }
     return self::ok(NH_DB::get_config());
+  }
+
+  // -------------------------------------------------------- verificación VH
+
+  private static function puede_ver_verificacion(?array $row): bool {
+    if (NH_Roles::user_is_manager()) return true;
+    if (!$row) return false;
+    $uid = get_current_user_id();
+    return (int) ($row['docente_user_id'] ?? 0) === $uid;
+  }
+
+  private static function rango_desde_request(WP_REST_Request $req): array|WP_Error {
+    $desde = self::validar_fecha((string) $req->get_param('desde'));
+    $hasta = self::validar_fecha((string) $req->get_param('hasta'));
+    $anio = (int) $req->get_param('anio');
+    $mes = (int) $req->get_param('mes');
+    if (!$desde || !$hasta) {
+      if ($anio >= 2000 && $mes >= 1 && $mes <= 12) {
+        [$desde, $hasta] = NH_Verificacion::rango_mes($anio, $mes);
+      }
+    }
+    if (!$desde || !$hasta || $hasta < $desde) {
+      return self::err('Indicá mes y año, o desde y hasta (Y-m-d).');
+    }
+    return [$desde, $hasta];
+  }
+
+  public static function actores_verificacion(WP_REST_Request $req) {
+    $rango = self::rango_desde_request($req);
+    if (is_wp_error($rango)) return $rango;
+    [$desde, $hasta] = $rango;
+    $ambito = $req->get_param('ambito') === 'grupo' ? 'grupo' : 'docente';
+    $curso_id = ((int) $req->get_param('curso_id')) ?: null;
+    $items = NH_Verificacion::resumen_actores($desde, $hasta, $ambito, $curso_id);
+    return self::ok([
+      'desde' => $desde,
+      'hasta' => $hasta,
+      'ambito' => $ambito,
+      'periodo' => NH_Verificacion::periodo_texto($desde, $hasta),
+      'items' => $items,
+    ]);
+  }
+
+  public static function preview_verificacion(WP_REST_Request $req) {
+    $rango = self::rango_desde_request($req);
+    if (is_wp_error($rango)) return $rango;
+    [$desde, $hasta] = $rango;
+
+    $ambito = $req->get_param('ambito') === 'grupo' ? 'grupo' : 'docente';
+    $docente_id = ((int) $req->get_param('docente_id')) ?: ((int) $req->get_param('docente_user_id')) ?: null;
+    $aula_id = ((int) $req->get_param('aula_id')) ?: null;
+    $curso_id = ((int) $req->get_param('curso_id')) ?: null;
+
+    if (!NH_Roles::user_is_manager()) {
+      $ambito = 'docente';
+      $docente_id = get_current_user_id();
+      $aula_id = null;
+    }
+
+    $reporte = NH_Verificacion::construir([
+      'ambito' => $ambito,
+      'docente_user_id' => $docente_id,
+      'aula_id' => $aula_id,
+      'curso_id' => $curso_id,
+      'empresa' => (string) $req->get_param('empresa'),
+      'desde' => $desde,
+      'hasta' => $hasta,
+    ]);
+    if (!empty($reporte['error'])) return self::err($reporte['error']);
+    return self::ok(['reporte' => $reporte]);
+  }
+
+  public static function list_verificaciones(WP_REST_Request $req) {
+    $filtros = [];
+    if (!NH_Roles::user_is_manager()) {
+      $filtros['docente_user_id'] = get_current_user_id();
+    } else {
+      $doc = (int) $req->get_param('docente_id');
+      if ($doc) $filtros['docente_user_id'] = $doc;
+      $aula = (int) $req->get_param('aula_id');
+      if ($aula) $filtros['aula_id'] = $aula;
+      $curso = (int) $req->get_param('curso_id');
+      if ($curso) $filtros['curso_id'] = $curso;
+      $estado = sanitize_text_field((string) $req->get_param('estado'));
+      if ($estado) $filtros['estado'] = $estado;
+    }
+    $desde = self::validar_fecha((string) $req->get_param('desde'));
+    $hasta = self::validar_fecha((string) $req->get_param('hasta'));
+    if ($desde) $filtros['desde'] = $desde;
+    if ($hasta) $filtros['hasta'] = $hasta;
+    return self::ok(['items' => NH_Verificacion::listar($filtros)]);
+  }
+
+  public static function get_verificacion(WP_REST_Request $req) {
+    $row = NH_Verificacion::get((int) $req['id']);
+    if (!$row) return self::err('Verificación no encontrada.', 404);
+    if (!self::puede_ver_verificacion($row)) return self::err('No tenés acceso a este reporte.', 403);
+    return self::ok(NH_Verificacion::serializar_fila($row, true));
+  }
+
+  public static function create_verificacion(WP_REST_Request $req) {
+    $rango = self::rango_desde_request($req);
+    if (is_wp_error($rango)) return $rango;
+    [$desde, $hasta] = $rango;
+    $out = NH_Verificacion::crear([
+      'ambito' => $req->get_param('ambito') === 'grupo' ? 'grupo' : 'docente',
+      'docente_user_id' => ((int) $req->get_param('docente_id')) ?: ((int) $req->get_param('docente_user_id')),
+      'aula_id' => (int) $req->get_param('aula_id'),
+      'curso_id' => (int) $req->get_param('curso_id'),
+      'empresa' => (string) $req->get_param('empresa'),
+      'desde' => $desde,
+      'hasta' => $hasta,
+      'comentario_secretaria' => (string) $req->get_param('comentario_secretaria'),
+    ]);
+    if (is_wp_error($out)) return $out;
+    return self::ok($out, 201);
+  }
+
+  public static function update_verificacion(WP_REST_Request $req) {
+    $id = (int) $req['id'];
+    $json = $req->get_json_params();
+    if (!is_array($json)) $json = [];
+    $patch = [];
+    foreach (['revisado_el', 'enviado_el', 'reportado_el', 'pagado_el', 'comentario_secretaria', 'empresa', 'estado'] as $k) {
+      if ($req->has_param($k) || array_key_exists($k, $json)) {
+        $patch[$k] = $req->has_param($k) ? $req->get_param($k) : $json[$k];
+      }
+    }
+    foreach (['revisado_el', 'enviado_el', 'reportado_el', 'pagado_el'] as $k) {
+      if (isset($patch[$k]) && $patch[$k] !== '' && $patch[$k] !== null) {
+        $ok = self::validar_fecha((string) $patch[$k]);
+        if (!$ok) return self::err('Fecha inválida en ' . $k . '.');
+        $patch[$k] = $ok;
+      }
+    }
+    $out = NH_Verificacion::actualizar_meta($id, $patch);
+    return is_wp_error($out) ? $out : self::ok($out);
+  }
+
+  public static function refrescar_verificacion(WP_REST_Request $req) {
+    $out = NH_Verificacion::refrescar((int) $req['id']);
+    return is_wp_error($out) ? $out : self::ok($out);
+  }
+
+  public static function comentario_docente_verificacion(WP_REST_Request $req) {
+    $id = (int) $req['id'];
+    $row = NH_Verificacion::get($id);
+    if (!$row) return self::err('Verificación no encontrada.', 404);
+    if (!self::puede_ver_verificacion($row)) return self::err('No tenés acceso a este reporte.', 403);
+    $texto = (string) $req->get_param('comentario_docente');
+    if ($texto === '' && $req->get_json_params()) {
+      $json = $req->get_json_params();
+      $texto = (string) ($json['comentario_docente'] ?? $json['comentario'] ?? '');
+    }
+    $out = NH_Verificacion::comentario_docente($id, $texto, get_current_user_id());
+    return is_wp_error($out) ? $out : self::ok($out);
   }
 }
